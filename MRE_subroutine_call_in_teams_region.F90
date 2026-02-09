@@ -3,21 +3,34 @@
 !! regions
 
 module constants_mod
+  #ifdef USE_DERIVED_TYPES
+  use derived_types_mod
+  #endif
   implicit none
 
-  ! Simulation parameters
-  integer, parameter :: nx = 288, ny = 288, nz = 100
+  !! Simulation parameters
+  !integer, parameter :: nx = 288, ny = 288, nz = 100
   integer, parameter :: iterations = 100
 
   contains
 
   !> Subroutine that contains a k-loop with do concurrents over i,j followed by
   !! a call to compute_grad_mre and more do concurrents
-  subroutine advection_calc_mre(u, v, h, adv_u, adv_v, metric_x, metric_y)
+  #ifdef USE_DERIVED_TYPES
+  subroutine advection_calc_mre(u, v, h, adv_u, adv_v, metric_x, metric_y, nx, ny, nz, dt1, dt2)
+  #else
+  subroutine advection_calc_mre(u, v, h, adv_u, adv_v, metric_x, metric_y, nx, ny, nz )
+  #endif
+    
     implicit none
+    integer, intent(in) :: nx, ny, nz
     real, intent(in) :: u(nx, ny, nz), v(nx, ny, nz), h(nx, ny, nz)
     real, intent(out) :: adv_u(nx, ny, nz), adv_v(nx, ny, nz)
     real, intent(in) :: metric_x(nx, ny), metric_y(nx, ny)
+    #ifdef USE_DERIVED_TYPES
+    type(my_type1), intent(in) :: dt1
+    type(my_type2), intent(in) :: dt2
+    #endif
 
     ! Local variables
     real :: ke(nx, ny), kex(nx, ny), key(nx, ny)
@@ -33,6 +46,7 @@ module constants_mod
     !$omp target enter data map(alloc: key, kex, ke)
 
     ! Main k-loop structure
+    !  !$omp target teams distribute parallel do private(curl, coriolis, ke, kex, key)
     !$omp target teams loop private(curl, coriolis, ke, kex, key)
     do k = 1, nz
 
@@ -44,7 +58,13 @@ module constants_mod
       enddo
       
       ! Call to subroutine similar to compute_grad
-      call compute_grad_mre(u, v, h, ke, kex, key, k)
+        
+      #ifdef USE_DERIVED_TYPES
+      call compute_grad_mre(u, v, h, ke, kex, key, k, nx, ny, nz , dt1, dt2 )
+      #else
+      call compute_grad_mre(u, v, h, ke, kex, key, k, nx, ny, nz )
+      #endif
+      
 
       ! Do work after function call
       do concurrent (j=2:ny-1, i=2:nx-1)
@@ -66,13 +86,22 @@ module constants_mod
   end subroutine advection_calc_mre
 
   !> Subroutine containing do concurrents over i,j that access multiple indices
-  subroutine compute_grad_mre(u, v, h, ke, kex, key, k)
+  #ifdef USE_DERIVED_TYPES
+  subroutine compute_grad_mre(u, v, h, ke, kex, key, k, nx, ny, nz, dt1, dt2)
+  #else
+  subroutine compute_grad_mre(u, v, h, ke, kex, key, k, nx, ny, nz )
+  #endif
+    
     !$omp declare target
     implicit none
 
-    integer, intent(in) :: k
+    integer, intent(in) :: k, nx, ny, nz
     real, intent(in) :: u(nx, ny, nz), v(nx, ny, nz), h(nx, ny, nz)
     real, intent(out) :: ke(nx, ny), kex(nx, ny), key(nx, ny)
+    #ifdef USE_DERIVED_TYPES
+    type(my_type1), intent(in) :: dt1
+    type(my_type2), intent(in) :: dt2
+    #endif
 
     ! Local variables
     integer :: i, j
@@ -100,68 +129,3 @@ module constants_mod
   end subroutine compute_grad_mre
 
 end module constants_mod
-
-program MRE_advection
-  use constants_mod
-
-  implicit none
-
-  ! Array declarations - main arrays
-  real, allocatable :: u(:,:,:), v(:,:,:), h(:,:,:)
-  real, allocatable :: result_u(:,:,:), result_v(:,:,:)
-  real, allocatable :: metric_x(:,:), metric_y(:,:)
-
-  integer :: iter
-  real :: start_time, end_time
-
-  ! Allocate arrays
-  allocate(u(nx, ny, nz))
-  allocate(v(nx, ny, nz))
-  allocate(h(nx, ny, nz))
-  allocate(result_u(nx, ny, nz))
-  allocate(result_v(nx, ny, nz))
-  allocate(metric_x(nx, ny))
-  allocate(metric_y(nx, ny))
-
-  ! Initialize arrays with random values
-  call random_seed()
-  call random_number(u)
-  call random_number(v)
-  call random_number(h)
-  call random_number(metric_x)
-  call random_number(metric_y)
-
-  u = u * 10.0
-  v = v * 10.0
-  h = h * 100.0 + 1.0  ! Ensure h > 1
-  metric_x = metric_x + 0.5  ! Ensure > 0
-  metric_y = metric_y + 0.5  ! Ensure > 0
-
-  result_u = 0.0
-  result_v = 0.0
-
-  ! Map variables to device
-  !$omp target enter data map(to: u,v,h)
-  !$omp target enter data map(to: result_u, result_v)
-  !$omp target enter data map(to: metric_x, metric_y)
-
-  ! Timing wrapper
-  call cpu_time(start_time)
-
-  ! Main loop - iterations for performance testing
-  do iter = 1, iterations
-    call advection_calc_mre(u, v, h, result_u, result_v, metric_x, metric_y)
-  enddo
-
-  call cpu_time(end_time)
-
-  !$omp target exit data map(from: u,v,h)
-  !$omp target exit data map(from: result_u, result_v)
-  !$omp target exit data map(from: metric_x, metric_y)
-
-  print *, "Total time for ", iterations, " iterations: ", (end_time - start_time), " seconds"
-  print *, "Average time per iteration: ", (end_time - start_time) / real(iterations), " seconds"
-
-  deallocate(u, v, h, result_u, result_v, metric_x, metric_y)
-
-end program MRE_advection
