@@ -1,7 +1,13 @@
 program MRE_advection
-  use constants_mod
+  use chain_mod1
+  #ifdef USE_DERIVED_TYPES
+  use derived_types_mod
+  #endif
 
   implicit none
+
+  ! Array dimensions
+   integer :: nx = 288, ny = 288, nz = 100
 
   ! Array declarations - main arrays
   real, allocatable :: u(:,:,:), v(:,:,:), h(:,:,:)
@@ -11,6 +17,12 @@ program MRE_advection
   integer :: iter
   real :: start_time, end_time
 
+  ! Derived type variables
+  #ifdef USE_DERIVED_TYPES
+  type(my_type1) :: dt1
+  type(my_type2) :: dt2
+  #endif
+
   ! Allocate arrays
   allocate(u(nx, ny, nz))
   allocate(v(nx, ny, nz))
@@ -19,6 +31,20 @@ program MRE_advection
   allocate(result_v(nx, ny, nz))
   allocate(metric_x(nx, ny))
   allocate(metric_y(nx, ny))
+
+  ! Allocate and initialize derived type fields
+  #ifdef USE_DERIVED_TYPES
+  dt1%n = 10
+  dt1%scalar = 1.23
+  allocate(dt1%arr(dt1%n))
+  dt1%arr = 42.0
+
+  dt2%m = 5
+  dt2%n = 8
+  dt2%value = 3.14
+  allocate(dt2%matrix(dt2%m, dt2%n))
+  dt2%matrix = 7.0
+  #endif
 
   ! Initialize arrays with random values
   call random_seed()
@@ -47,7 +73,11 @@ program MRE_advection
 
   ! Main loop - iterations for performance testing
   do iter = 1, iterations
-    call advection_calc_mre(u, v, h, result_u, result_v, metric_x, metric_y)
+    #ifdef USE_DERIVED_TYPES
+    call call_chain1(u, v, h, result_u, result_v, metric_x, metric_y, nx, ny, nz, dt1, dt2)
+    #else
+    call call_chain1(u, v, h, result_u, result_v, metric_x, metric_y, nx, ny, nz)
+    #endif
   enddo
 
   call cpu_time(end_time)
@@ -60,5 +90,9 @@ program MRE_advection
   print *, "Average time per iteration: ", (end_time - start_time) / real(iterations), " seconds"
 
   deallocate(u, v, h, result_u, result_v, metric_x, metric_y)
+  #ifdef USE_DERIVED_TYPES
+  deallocate(dt1%arr)
+  deallocate(dt2%matrix)
+  #endif
 
 end program MRE_advection
